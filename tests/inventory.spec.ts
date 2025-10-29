@@ -6,6 +6,9 @@ test.describe("Inventario – sesión reutilizada", () => {
         log.step("Abriendo inventario…");
         await page.goto("/inventory.html");
 
+        await expect(page).toHaveURL(/inventory\.html/);
+        await expect(page.locator(".inventory_item").first()).toBeVisible({ timeout: 10_000 });
+
         await expect(page.locator(".inventory_item").first()).toBeVisible();
 
         log.step("Añadiendo el primer producto al carrito…");

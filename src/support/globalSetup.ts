@@ -51,16 +51,24 @@ export default async function globalSetup(config: FullConfig) {
         }
         log.ok("Respuesta mock válida ✅");
 
-        // Simular sesión en SauceDemo
+        // ✅ Generar storageState haciendo login UI (robusto en todos los navegadores)
         const browser = await chromium.launch({ headless: true });
         const context = await browser.newContext();
         const page = await context.newPage();
-        await page.goto(ENV.BASE_URL);
 
-        await page.addInitScript(() => {
-            window.localStorage.setItem("session-username", "standard_user");
-        });
-        await page.reload();
+        // (Opcional) Guardar el token mock para trazabilidad
+        await page.addInitScript((token: string) => {
+            localStorage.setItem("auth-token", token);
+        }, (json as any).token);
+
+        await page.goto(ENV.BASE_URL);
+        await page.fill("#user-name", ENV.AUTH_USER);
+        await page.fill("#password", ENV.AUTH_PASSWORD);
+        await page.click("#login-button");
+
+        // Asegura que realmente estás dentro antes de guardar estado
+        await page.waitForURL("**/inventory.html");
+        await page.locator(".inventory_item").first().waitFor({ state: "visible", timeout: 10_000 });
 
         await context.storageState({ path: STORAGE_PATH });
         await browser.close();
@@ -68,6 +76,7 @@ export default async function globalSetup(config: FullConfig) {
         await wiremock.stop();
         log.ok(`storageState generado en ${STORAGE_PATH} (modo mock)`);
         return;
+
     }
 
     // ✅ Modo REAL

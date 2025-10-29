@@ -4,10 +4,11 @@ import { ENV } from "./config/env";
 export default defineConfig({
     testDir: "./tests",
     timeout: 30_000,
+    expect: { timeout: 10_000 },
     retries: 1,
     reporter: [
         ["line"],
-        ["allure-playwright"],
+        ["allure-playwright", { outputFolder: "reports/allure-results" }],
         ["html", { outputFolder: "reports/html", open: "never" }],
     ],
     use: {
@@ -17,6 +18,7 @@ export default defineConfig({
         screenshot: "only-on-failure",
         video: "retain-on-failure",
         headless: ENV.HEADLESS,
+        navigationTimeout: 30_000,
     },
     projects: [
         { name: "chromium", use: { ...devices["Desktop Chrome"] } },
