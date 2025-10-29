@@ -142,7 +142,7 @@ Remove-Item .auth\storageState.json -Force -ErrorAction Ignore
 
 ### Real (UI login + storageState)
 
-**PowerShell**
+**Windows**
 
 ```powershell
 $env:AUTH_MODE='real'
@@ -160,7 +160,7 @@ AUTH_MODE=real npx playwright test
 
 ### Mock (Testcontainers + WireMock + Zod)
 
-**PowerShell**
+**Windows**
 
 ```powershell
 Remove-Item .auth\storageState.json -Force -ErrorAction Ignore
@@ -202,66 +202,194 @@ Adjuntos por defecto: **screenshots**, **videos** y **trace.zip** en fallos o re
 
 ---
 
-## 🐳 Docker
+## ▶️ Quick Start (local)
 
-### Build de la imagen
-
-**PowerShell**
-
-```powershell
-docker build -t e2-playwright .
-
-```
-
-**Bash**
-
-```bash
-docker build -t e2-playwright .
-
-```
-
-### Ejecutar en **REAL**
-
-**PowerShell**
-
-```powershell
-docker run --rm `
-  -e BASE_URL=https://www.saucedemo.com `
-  -e AUTH_MODE=real `
-  -e HEADLESS=true `
-  -v "${PWD}\reports:/app/reports" `
-  -v "${PWD}\.auth:/app/.auth" `
-  e2-playwright
-
-```
-
-**Bash**
-
-```bash
-docker run --rm \
-  -e BASE_URL=https://www.saucedemo.com \
-  -e AUTH_MODE=real \
-  -e HEADLESS=true \
-  -v "$(pwd)/reports:/app/reports" \
-  -v "$(pwd)/.auth:/app/.auth" \
-  e2-playwright
-
-```
-
-### Ejecutar en **MOCK** (requiere Docker Desktop activo)
-
-**PowerShell**
-
-```powershell
-docker run --rm `
-  -e AUTH_MODE=mock `
-  -v "${PWD}\.auth:/app/.auth" `
-  e2-playwright
-
-```
-
-> La imagen usa los navegadores de Playwright preinstalados. Los reportes se vuelcan en ./reports del host.
+> Requisitos: Node 20+, npm 10+, Docker Desktop (para modo mock).
 >
+
+```bash
+Mostrar siempre los detalles
+# 1) Instalar dependencias
+npm ci
+
+# 2) Instalar navegadores de Playwright (si haces ejecución local)
+npx playwright install --with-deps
+
+```
+
+### Ejecutar en **modo REAL** (3 navegadores)
+
+```bash
+Mostrar siempre los detalles
+# PowerShell / Bash
+$env:AUTH_MODE='real'        # en bash: export AUTH_MODE=real
+npx playwright test
+
+```
+
+### Ejecutar en **modo MOCK** (3 navegadores)
+
+```bash
+Mostrar siempre los detalles
+# PowerShell / Bash
+$env:AUTH_MODE='mock'        # en bash: export AUTH_MODE=mock
+npx playwright test
+
+```
+
+### Reportes
+
+```bash
+Mostrar siempre los detalles
+# HTML
+npx playwright show-report reports/html
+
+# Allure (requiere Allure CLI instalado en tu host)
+npm run allure:generate
+npm run allure:open
+
+```
+
+---
+## 🐳 Docker (Compose) — Paso a paso con explicación
+
+> Requisitos previos (una sola vez):
+>
+> - Tener **Docker Desktop** activo (Windows con WSL2 → contexto `desktop-linux`).
+> - Archivo **`compose.yaml`** en la raíz con los servicios `real` y `mock`.
+> - Archivo **`.env`** en texto plano (UTF-8) sin here-strings de PowerShell, con:
+    >
+    >     ```
+>     BASE_URL=https://www.saucedemo.com
+>     HEADLESS=true
+>     AUTH_USER=standard_user
+>     AUTH_PASSWORD=secret_sauce
+>     AUTH_MODE=real
+>     
+>     ```
+>
+> - Si ves el aviso `the attribute 'version' is obsolete` en Compose, **borra** la clave `version:` del `compose.yaml`.
+
+---
+
+### 🧹 Paso 1 — Limpiar el estado anterior
+
+```bash
+docker compose down -v --remove-orphans
+
+```
+
+**Por qué:**
+
+- Cierra y elimina cualquier contenedor, red y **volumen** que haya dejado un run previo.
+- Evita interferencias (p. ej., redes huérfanas, artefactos antiguos) que pueden provocar fallos “raros”.
+
+---
+
+### 🏗️ Paso 2 — Construir la imagen desde cero
+
+```bash
+docker compose build --no-cache
+
+```
+
+**Por qué:**
+
+- Fuerza una compilación limpia (sin capas cacheadas) para garantizar que:
+    - Se usa la base `mcr.microsoft.com/playwright:v1.56.1-jammy` alineada con `@playwright/test@1.56.1`.
+    - Quedan creadas las rutas de artefactos dentro del contenedor:
+
+      `/home/pwuser/app/reports`, `/home/pwuser/app/.auth`, `/home/pwuser/app/test-results`.
+
+
+---
+
+### ▶️ Paso 3 — Ejecutar tests en **modo REAL**
+
+```bash
+docker compose run --rm real   # debe pasar
+
+```
+
+**Qué hace y por qué pasa:**
+
+- Lanza el servicio `real` que ejecuta la suite **contra la web real** (`AUTH_MODE=real`).
+- El **login UI** genera `.auth/storageState.json` que se **persiste en el host** (volumen montado).
+- Corre la **matriz de navegadores** (Chromium/Firefox/WebKit) y deja:
+    - **HTML report** en `reports/html`.
+    - **Allure results** en `reports/allure-results`.
+
+> 💡 En Windows, si alguna vez ves errores EACCES al escribir en volúmenes NTFS, tu compose.yaml puede incluir user: "0:0" en el servicio para ejecutar como root dentro del contenedor.
+>
+
+---
+
+### 🧪 Paso 4 — Ejecutar tests en **modo MOCK** (con Testcontainers)
+
+```bash
+docker compose run --rm mock   # ahora también debe pasar
+
+```
+
+**Qué hace y por qué pasa:**
+
+- Lanza `mock`, que usa **Testcontainers** para crear un contenedor **WireMock** *desde dentro* del contenedor de tests.
+- Publica el mapping `POST /auth/login` y valida el contrato con **Zod** (contrato consistente, sin flakiness).
+- Vuelve a generar `storageState` y ejecuta la **misma matriz** pero en entorno **aislado** (mock).
+- Artefactos de reportes y traces se guardan en los mismos volúmenes del host.
+
+> ℹ️ Durante el run de mock, Testcontainers puede crear el contenedor Ryuk (limpieza). Es esperado.
+>
+>
+> Puedes verlo con:
+>
+> `docker ps --format "{{.Image}} {{.Names}}" | findstr /i ryuk` (Windows)
+>
+
+---
+
+### 🛠️ Troubleshooting rápido
+
+- **`Failed to connect to Reaper` o `Could not find a working container runtime strategy` en `mock`:**
+
+  Asegúrate de que tu `compose.yaml` para `mock` **monta `docker.sock`** y exporta `DOCKER_HOST=unix:///var/run/docker.sock`.
+
+  (Esto permite a Testcontainers crear contenedores desde dentro.)
+
+- **`.env` inválido (error “unexpected character”):**
+
+  Crea `.env` como **texto plano** sin `@" ... "@` de PowerShell; cada línea `CLAVE=valor` sin comillas.
+
+
+---
+
+### ✅ Resultado esperado
+
+- `real` → 3 tests **passed** con login UI real y reportes en `reports/…`.
+- `mock` → 3 tests **passed**, WireMock levantado por Testcontainers y reportes/traces en `reports/…`.
+
+> Para abrir el HTML report (desde tu host):
+>
+> - Windows: `npx playwright show-report reports\html`
+> - Linux/Mac: `npx playwright show-report reports/html`
+>
+> Allure (si tienes Allure CLI):
+>
+> `npm run allure:generate` y `npm run allure:open`
+>
+---
+
+## 🧪 Scripts NPM
+
+| Script | Descripción |
+| --- | --- |
+| **`npm test`** | Ejecuta toda la suite (modo controlado por `AUTH_MODE`). |
+| **`npm run test:real`** | Ejecuta en **real** (con `AUTH_MODE=real`). |
+| **`npm run test:mock`** | Ejecuta en **mock** (con `AUTH_MODE=mock`). |
+| **`npm run allure:generate`** | Genera reporte Allure en `reports/allure-report`. |
+| **`npm run allure:open`** | Sirve el reporte Allure localmente. |
+
+*(Si no ves estos scripts en `package.json`, añádelos o ejecuta los comandos equivalentes mostrados arriba.)*
 
 ---
 
@@ -342,22 +470,3 @@ Ejemplo de trazas en consola:
 npx playwright install --force
 
 ```
-
----
-
-## 🗺️ Roadmap (siguiente entregable)
-
-- Screenplay + POM real (Tasks/Interactions/Questions).
-- Test data builders / factories.
-- Marcado de tests por criticidad y suite runner.
-- Linting/format (ESLint + Prettier) y pre‑commit hooks.
-- Mocks adicionales (catálogo, inventario) y **contract tests** con Zod.
-
----
-
-## 🧾 Créditos y licencia
-
-Repositorio didáctico para **Entregable 2**: Playwright + TS · Allure · Docker · Testcontainers/WireMock · Zod.
-
-> Cualquier duda o mejora: abrir issue/PR. ¡Happy testing! 🚀
->

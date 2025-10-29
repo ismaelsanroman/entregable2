@@ -1,31 +1,27 @@
-FROM mcr.microsoft.com/playwright:stable
+# syntax=docker/dockerfile:1
+ARG PLAYWRIGHT_VERSION=1.56.1
+FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-jammy
 
+WORKDIR /home/pwuser/app
 
-WORKDIR /app
-
-
-# Dependencias node
+# Dependencias Node
 COPY package*.json ./
 RUN npm ci
 
-
-# Copia del proyecto
+# Código
 COPY . .
 
+# Crear rutas y dar permisos cuando NO se bind-montan desde host
+USER root
+RUN mkdir -p /home/pwuser/app/reports/html /home/pwuser/app/.auth /home/pwuser/app/test-results \
+ && chown -R pwuser:pwuser /home/pwuser/app
 
-# (Opcional si no usas la imagen oficial) Navegadores + deps
-# RUN npx playwright install --with-deps
+# (Opcional) Java para generar Allure dentro del contenedor
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openjdk-17-jre-headless \
+ && rm -rf /var/lib/apt/lists/*
 
+USER pwuser
 
-# Allure CLI requiere Java en algunos entornos
-RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jre-headless && rm -rf /var/lib/apt/lists/*
-
-
-ENV NODE_ENV=production \
-BASE_URL=https://www.saucedemo.com \
-AUTH_MODE=real \
-HEADLESS=true
-
-
-# Ejecuta tests por defecto
-CMD ["npm", "run", "test"]
+# Ejecuta la suite por defecto
+CMD ["npm","run","test"]
