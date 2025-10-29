@@ -28,3 +28,4 @@ allure-report/
 # Reportes genéricos
 reports/
 report/
+.auth/storageState.json
