@@ -1,0 +1,25 @@
+{
+  "name": "entregable-2-playwright-ts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "playwright install",
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "test:mock": "cross-env AUTH_MODE=mock npx playwright test",
+    "test:mock:win": "set AUTH_MODE=mock&& npx playwright test",
+    "test:mock:ps": "powershell -NoProfile -Command \"$env:AUTH_MODE='mock'; npx playwright test; Remove-Item Env:AUTH_MODE\"",
+    "allure:generate": "allure generate ./reports/allure-results --clean -o ./reports/allure-report",
+    "allure:open": "allure open ./reports/allure-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "allure-commandline": "^2.29.0",
+    "allure-playwright": "^2.13.0",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.4.5",
+    "testcontainers": "^10.9.0",
+    "typescript": "^5.6.3",
+    "zod": "^3.23.8"
+  }
+}

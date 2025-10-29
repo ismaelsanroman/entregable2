@@ -1,0 +1,5 @@
+allure-results/**     linguist-generated
+allure-report/**      linguist-generated
+playwright-report/**  linguist-generated
+test-results/**       linguist-generated
+reports/**            linguist-generated
