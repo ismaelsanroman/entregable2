@@ -1,50 +1,69 @@
 /**
  * 🧾 AuthResponseSchema (Zod)
  *
- * Propósito:
- * - Definir y validar el contrato de la respuesta de autenticación (mock/real).
- * - Ofrecer **tipado derivado** (`AuthResponse`) para usar con seguridad en el código.
- *
- * Decisiones de contrato:
- * - `token`: string mínimo 10 chars para evitar tokens triviales.
- * - `user`: objeto con `id` numérico positivo, `username` mínimo 3 chars.
- * - `roles`: array de strings; por defecto ["user"] si no llega, y además es opcional
- *   (si no viene, Zod colocará ese default tras parsear).
- * - `expiresIn`: número entero positivo (segundos); es **opcional** porque hay backends
- *   que devuelven `expiresAt` (ISO) en lugar de duración. Si tu backend usa `expiresAt`,
- *   considera:
- *     1) añadir un campo alternativo, o
- *     2) transformar `expiresAt` → `expiresIn` en una capa de mapeo previa.
- *
- *   ¡Uso recomendado:
- *   const result = AuthResponseSchema.safeParse(data)
- *   if (! Result.success) {/* loguear issues y abortar */ /* }
- *   const auth = result.data // <- tipado seguro: AuthResponse
+ * - Valida y normaliza la respuesta de autenticación (mock/real).
+ * - Devuelve siempre `expiresIn` (si llega `expiresAt`, se transforma).
+ * - Proporciona tipos TS derivados.
  */
 
 import { z } from "zod";
 
-export const AuthResponseSchema = z.object({
-    // 🔐 Token de autenticación (mínimo 10 caracteres para cierta robustez)
-    token: z.string().min(10),
+const RolesSchema = z
+    .array(z.string().min(1).transform((s) => s.trim()))
+    .default(["user"])
+    .optional();
 
-    // 👤 Información básica de usuario autenticado
+const BaseSchema = z.object({
+    token: z.string().min(10).transform((s) => s.trim()),
     user: z.object({
-        // ID numérico entero y positivo
         id: z.number().int().positive(),
-
-        // Username mínimo 3 caracteres (evita vacíos/ruidos)
-        username: z.string().min(3),
-
-        // Roles del usuario: si no llegan, se asigna ["user"] por defecto.
-        // Marcado como opcional para tolerar backends que lo omiten por completo.
-        roles: z.array(z.string()).default(["user"]).optional(),
+        username: z.string().min(3).transform((s) => s.trim()),
+        roles: RolesSchema,
     }),
-
-    // ⏱️ Tiempo de expiración en segundos (si está disponible).
-    // Si tu backend usa `expiresAt` (ISO), ajusta el contrato o aplica una transformación previa.
+    // Permite una u otra forma de expiración
     expiresIn: z.number().int().positive().optional(),
+    expiresAt: z.string().datetime().optional(),
 });
 
-// 🎯 Tipo TypeScript inferido a partir del esquema (siempre consistente con las reglas de Zod)
+export const AuthResponseSchema = BaseSchema.superRefine((obj, ctx) => {
+    if (!obj.expiresIn && !obj.expiresAt) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Debe incluirse `expiresIn` o `expiresAt`.",
+            path: ["expiresIn"],
+        });
+    }
+}).transform((obj) => {
+    const roles = Array.from(
+        new Set((obj.user.roles ?? ["user"]).map((r) => r.trim()).filter(Boolean))
+    );
+
+    const secondsFromAt =
+        obj.expiresAt
+            ? Math.max(
+                1,
+                Math.floor((new Date(obj.expiresAt).getTime() - Date.now()) / 1000)
+            )
+            : undefined;
+
+    return {
+        token: obj.token,
+        user: { id: obj.user.id, username: obj.user.username, roles },
+        expiresIn: obj.expiresIn ?? secondsFromAt,
+    };
+});
+
+// Tipo final después de la transformación
 export type AuthResponse = z.infer<typeof AuthResponseSchema>;
+
+// Helper para parsear con mensajes claros
+export function parseAuthResponse(data: unknown): AuthResponse {
+    const result = AuthResponseSchema.safeParse(data);
+    if (!result.success) {
+        const reasons = result.error.errors
+            .map((e) => `• ${e.path.join(".") || "(root)"}: ${e.message}`)
+            .join("\n");
+        throw new Error(`AuthResponse inválido:\n${reasons}`);
+    }
+    return result.data;
+}

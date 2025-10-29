@@ -1,185 +1,101 @@
-/**
- * 🚪 Global Setup (Playwright)
- *
- * Propósito:
- * - Generar un `storageState` reutilizable para TODA la suite antes de ejecutar los tests.
- * - Soportar dos modos de autenticación:
- *   1) REAL: login UI contra la aplicación real (ENV.AUTH_MODE !== "mock").
- *   2) MOCK: levantar WireMock vía Testcontainers, publicar el endpoint `/auth/login`,
- *      validar el contrato con Zod y ejecutar un login UI semilla (o híbrido) que
- *      garantice un flujo estable y determinista.
- *
- * Flujo general:
- * - Asegura la carpeta `.auth/` (persistencia del estado).
- * - Si `ENV.AUTH_MODE === "mock"`:
- *    - Arranca contenedor de WireMock (puerto 8080).
- *    - Espera a que WireMock responda (`/__admin/mappings`) → evita condiciones de carrera.
- *    - Publica mapping `POST /auth/login` con respuesta controlada (token y usuario).
- *    - Valida la respuesta mock con `AuthResponseSchema` (Zod) para asegurar contrato.
- *    - Lanza Chromium headless, inyecta el token en `localStorage` (semilla)
- *      y ejecuta el login UI (doble garantía, ver nota más abajo).
- *    - Verifica acceso a `inventory.html` y elementos clave visibles.
- *    - Guarda `storageState` en `.auth/storageState.json`.
- *    - Para el contenedor de WireMock (siempre en `finally`).
- * - Caso REAL (por defecto):
- *    - Lanza Chromium headless, hace login UI real con `AUTH_USER`/`AUTH_PASSWORD`,
- *      verifica acceso a inventario y persiste `storageState`.
- *
- * Notas importantes:
- * - Si tu `AuthResponseSchema` espera `expiresAt` (string ISO) y aquí se envía `expiresIn`
- *   (number), alinea o ajusta el esquema o el mapping del mock para evitar falsos fallos
- *   de contrato.
- * - La semilla de `localStorage` + login UI es intencional: refuerza la sesión en apps que
- *   requieren cookies de sesión además del token. Si tu app acepta **solo token**, puedes
- *   omitir el login UI en modo mock y navegar directamente a área interna tras setear token.
- *
- * Artefactos:
- * - Estado persistido: `.auth/storageState.json`
- *
- * Logs:
- * - `log.step(...)` y `log.ok(...)` trazan acciones clave (visibles en Allure/HTML).
- */
-
-import type { FullConfig } from "@playwright/test";
-import { chromium } from "@playwright/test";
-import { mkdirSync } from "fs";
-import { ENV } from "../../config/env";
-import { log } from "./logger";
-import { AuthResponseSchema } from "../../config/schemas/auth";
-
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
-
-// 📌 Ruta estándar donde guardaremos el estado de sesión
-const STORAGE_PATH = ".auth/storageState.json";
-
-/**
- * ⏳ Espera activa a que WireMock esté listo respondiendo a /__admin/mappings.
- * Evita carreras en las que el contenedor aún no aceptaba peticiones.
- */
-async function waitForWireMock(base: string, attempts = 12, delayMs = 500) {
-    for (let i = 0; i < attempts; i++) {
-        try {
-            const res = await fetch(`${base}/__admin/mappings`);
-            if (res.ok) return;
-        } catch {
-            // Ignorar y reintentar — el contenedor puede no estar listo aún
-        }
-        await new Promise((r) => setTimeout(r, delayMs));
-    }
-    throw new Error(`WireMock no respondió en ${attempts * delayMs} ms (${base})`);
-}
+import { FullConfig, request, chromium } from "@playwright/test";
+import { GenericContainer, Wait } from "testcontainers";
+import { parseAuthResponse } from "../../config/schemas/auth";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 export default async function globalSetup(config: FullConfig) {
-    // 🗂️ Garantiza que existe la carpeta de persistencia de sesión
-    mkdirSync(".auth", { recursive: true });
+    console.log("🚀 Iniciando Mock de Autenticación con Testcontainers (WireMock)...");
 
-    // 🧪 MODO MOCK — Testcontainers + WireMock + Zod
-    if (ENV.AUTH_MODE === "mock") {
-        log.step("Iniciando WireMock en contenedor (modo mock)…");
+    // 1) Arrancar WireMock efímero
+    const wiremock = await new GenericContainer("wiremock/wiremock:3.9.1")
+        .withExposedPorts(8080)
+        .withWaitStrategy(Wait.forLogMessage("verbose:"))
+        .withReuse()
+        .start();
 
-        let wiremock: StartedTestContainer | undefined;
+    // ⚠️ Usar host real (en Docker no es "localhost")
+    const host = wiremock.getHost();
+    const port = wiremock.getMappedPort(8080);
+    const mockBaseUrl = `http://${host}:${port}`;
+    console.log(`🌍 WireMock en ${mockBaseUrl}`);
 
-        try {
-            // 🐳 Arranca contenedor oficial de WireMock y expone 8080
-            wiremock = await new GenericContainer("wiremock/wiremock:3.9.1")
-                .withExposedPorts(8080)
-                .start();
+    // 2) Sembrar stub /auth/login que cumple el schema (Zod)
+    const stubPayload = {
+        request: { method: "POST", url: "/auth/login" },
+        response: {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            jsonBody: {
+                token: "TEST_TOKEN_12345", // ≥ 10 chars
+                user: { id: 1, username: "demo", roles: ["user", "admin"] },
+                // Puedes devolver expiresIn o expiresAt
+                expiresAt: "2099-01-01T00:00:00Z",
+            },
+        },
+    };
 
-            // 🔌 Resuelve host:puerto mapeado por Testcontainers
-            const port = wiremock.getMappedPort(8080);
-            const host = wiremock.getHost();
-            const base = `http://${host}:${port}`;
+    const seedRes = await fetch(`${mockBaseUrl}/__admin/mappings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(stubPayload),
+    });
+    if (!seedRes.ok) throw new Error("❌ Seed de WireMock falló");
+    console.log("🌱 Stub /auth/login creado");
 
-            // ⏳ Espera a que el admin de WireMock responda
-            await waitForWireMock(base);
+    // 3) Llamar al mock y validar/normalizar con Zod
+    const api = await request.newContext({ baseURL: mockBaseUrl });
+    const res = await api.post("/auth/login", { data: { user: "demo", pass: "demo" } });
+    if (!res.ok()) throw new Error(`Auth mock devolvió ${res.status()}`);
+    const auth = parseAuthResponse(await res.json());
+    console.log("✅ Auth normalizado:", { token: auth.token.slice(0, 6) + "…", expiresIn: auth.expiresIn });
 
-            // 🗺️ Publica el mapping de /auth/login con respuesta controlada y estable
-            await fetch(`${base}/__admin/mappings`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    request: { method: "POST", urlPath: "/auth/login" },
-                    response: {
-                        status: 200,
-                        headers: { "Content-Type": "application/json" },
-                        jsonBody: {
-                            token: "mocked-token-abcdef-1234567890",
-                            user: {
-                                id: 1,
-                                username: ENV.AUTH_USER ?? "standard_user",
-                                roles: ["user"],
-                            },
-                            // ⚠️ Si tu esquema espera `expiresAt` (ISO) en vez de `expiresIn` (number),
-                            // ajusta el mapping o el esquema para mantener consistencia.
-                            expiresIn: 3600,
-                        },
-                    },
-                }),
-            });
-
-            // 🔐 Llama al mock de login y valida contrato con Zod
-            log.step("Llamando a /auth/login (mock) y validando con Zod…");
-            const res = await fetch(`${base}/auth/login`, { method: "POST" });
-            const json = await res.json();
-            const parsed = AuthResponseSchema.safeParse(json);
-            if (!parsed.success) {
-                throw new Error(
-                    `Respuesta mock inválida: ${JSON.stringify(parsed.error.issues, null, 2)}`
-                );
-            }
-            log.ok("Respuesta mock válida ✅");
-
-            // 🧭 Abre navegador headless y prepara contexto limpio
-            const browser = await chromium.launch({ headless: true });
-            const context = await browser.newContext();
-            const page = await context.newPage();
-
-            // 🧪 Semilla de token en localStorage (útil si tu app lee token además de cookies de sesión)
-            await page.addInitScript((token: string) => {
-                localStorage.setItem("auth-token", token);
-            }, (json as any).token);
-
-            // 🔓 Login UI (híbrido): mantiene compatibilidad con apps que exigen cookies/sesión
-            await page.goto(ENV.BASE_URL);
-            await page.fill("#user-name", ENV.AUTH_USER);
-            await page.fill("#password", ENV.AUTH_PASSWORD);
-            await page.click("#login-button");
-
-            // ✅ Garantiza que estamos dentro del inventario antes de persistir el estado
-            await page.waitForURL("**/inventory.html");
-            await page.locator(".inventory_item").first().waitFor({ state: "visible", timeout: 10_000 });
-
-            // 💾 Persistencia de estado para toda la suite
-            await context.storageState({ path: STORAGE_PATH });
-            await browser.close();
-
-            log.ok(`storageState generado en ${STORAGE_PATH} (modo mock)`);
-            return;
-        } finally {
-            // 🧹 Limpieza del contenedor incluso si algo falla en el setup
-            if (wiremock) {
-                await wiremock.stop().catch(() => {});
-            }
-        }
-    }
-
-    // ✅ MODO REAL — login UI contra la app real
-    log.step("Login UI en SauceDemo (modo real)…");
-    const browser = await chromium.launch({ headless: true });
+    // 4) Generar .auth/storageState.json
+    const browser = await chromium.launch();
     const context = await browser.newContext();
     const page = await context.newPage();
 
-    await page.goto(ENV.BASE_URL);
-    await page.fill("#user-name", ENV.AUTH_USER);
-    await page.fill("#password", ENV.AUTH_PASSWORD);
-    await page.click("#login-button");
+    // BaseURL desde playwright.config (primer proyecto) o fallback
+    const baseURL = (config.projects?.[0]?.use as any)?.baseURL ?? "https://www.saucedemo.com";
+    const base = new URL(baseURL);
 
-    // 🧭 Verifica aterrizaje correcto en inventario
-    await page.waitForURL("**/inventory.html");
-    await page.locator(".inventory_item").first().waitFor({ state: "visible", timeout: 10_000 });
+    if (base.hostname.includes("saucedemo.com")) {
+        // 🔐 SauceDemo requiere login UI (la cookie custom no sirve)
+        const user = process.env.SAUCE_USER ?? "standard_user";
+        const pass = process.env.SAUCE_PASS ?? "secret_sauce";
 
-    // 💾 Guarda estado para el resto de tests
-    await context.storageState({ path: STORAGE_PATH });
+        console.log("🔐 Login UI en SauceDemo…");
+        await page.goto(baseURL, { waitUntil: "domcontentloaded" });
+        await page.getByPlaceholder("Username").fill(user);
+        await page.getByPlaceholder("Password").fill(pass);
+        await page.getByRole("button", { name: "Login" }).click();
+        await page.waitForURL(/\/inventory\.html$/, { timeout: 15_000 });
+        console.log("✅ Login UI OK → /inventory.html");
+    } else {
+        // 🍪 Para tu AUT real que acepte token/cookie
+        console.log("🍪 Seteando cookie de auth para dominio de la AUT…");
+        await context.addCookies([
+            {
+                name: "auth_token",
+                value: auth.token,
+                domain: base.hostname,
+                path: "/",
+                httpOnly: false,
+                secure: false,
+                sameSite: "Lax",
+            },
+        ]);
+        // Alternativa para localStorage:
+        // await page.goto(baseURL);
+        // await page.evaluate((t) => localStorage.setItem("auth_token", t), auth.token);
+    }
+
+    // Guardar storageState
+    const authDir = path.resolve(".auth");
+    await fs.mkdir(authDir, { recursive: true });
+    await context.storageState({ path: path.join(authDir, "storageState.json") });
     await browser.close();
-    log.ok(`storageState generado en ${STORAGE_PATH} (modo real)`);
+
+    process.env.MOCK_AUTH_URL = mockBaseUrl;
+    console.log("💾 .auth/storageState.json generado con éxito");
 }

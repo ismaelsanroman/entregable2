@@ -5,6 +5,9 @@
   "scripts": {
     "postinstall": "playwright install",
     "test": "npx playwright test",
+    "test:ci": "playwright test --reporter=line",
+    "mock:up": "docker compose up -d wiremock",
+    "mock:down": "docker compose down --remove-orphans",
     "test:headed": "npx playwright test --headed",
     "test:mock": "cross-env AUTH_MODE=mock npx playwright test",
     "test:mock:win": "set AUTH_MODE=mock&& npx playwright test",
