@@ -351,7 +351,193 @@ jobs:
 > Ventajas: **login único**, **paralelización segura**, **ambiente reproducible** y **contratos validados** en tiempo de ejecución.
 
 ---
+## 💊 Verrificar que todo funciona y no hemos "roto" nada
 
+### 🩺 Sanity check (versiones / diagnóstico)
+
+```bash
+# Común
+node -v
+npm -v
+npx playwright --version
+npx playwright doctor
+docker version
+```
+
+---
+
+### 🔧 Instalación y navegadores
+
+```bash
+npm ci
+npx playwright install --with-deps
+```
+
+---
+
+### 🧼 Reset rápido + regenerar sesión (globalSetup)
+
+**Windows (PowerShell)**
+
+```powershell
+Remove-Item -Recurse -Force .auth, reports -ErrorAction SilentlyContinue
+npx playwright test --project=chromium
+```
+
+**bash**
+
+```bash
+rm -rf .auth reports
+npx playwright test --project=chromium
+```
+
+---
+
+### 🚦 Smoke mínimo (sesión OK)
+
+```bash
+# Por tag (si usas @smoke)
+npx playwright test -g "@smoke" --project=chromium
+
+# Archivo de smoke
+npx playwright test tests/smoke/auth-state.spec.ts --project=chromium
+```
+
+---
+
+### 🌐 Suite completa / cross-browser
+
+```bash
+# Todos los navegadores de la matriz
+npx playwright test
+
+# Individual
+npx playwright test --project=chromium
+npx playwright test --project=firefox
+npx playwright test --project=webkit
+```
+
+---
+
+### 🐳 Ejecutar dentro de Docker (con Testcontainers)
+
+**Windows (PowerShell)**
+
+```powershell
+docker run --rm -t `
+  -u root `
+  --privileged `
+  -e BASE_URL="https://www.saucedemo.com" `
+  -e SAUCE_USER="standard_user" `
+  -e SAUCE_PASS="secret_sauce" `
+  -e DOCKER_HOST="unix:///var/run/docker.sock" `
+  -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="/var/run/docker.sock" `
+  -e TESTCONTAINERS_HOST_OVERRIDE="host.docker.internal" `
+  -v "/var/run/docker.sock:/var/run/docker.sock" `
+  -v "${PWD}:/work" -w /work `
+  entregable2 npx playwright test --project=chromium
+```
+
+**Linux (bash)**
+
+```bash
+docker run --rm -t \
+  -u root --privileged \
+  --add-host=host.docker.internal:host-gateway \
+  -e BASE_URL="https://www.saucedemo.com" \
+  -e SAUCE_USER="standard_user" \
+  -e SAUCE_PASS="secret_sauce" \
+  -e DOCKER_HOST=unix:///var/run/docker.sock \
+  -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
+  -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD":/work -w /work \
+  entregable2 npx playwright test --project=chromium
+```
+
+---
+
+### 🐋 Testcontainers verbose (debug de mock)
+
+**Windows (PowerShell):**
+
+```powershell
+$env:DEBUG="testcontainers*"
+npx playwright test --project=chromium
+```
+
+**bash:**
+
+```bash
+DEBUG=testcontainers* npx playwright test --project=chromium
+```
+
+---
+
+### 🧭 Verificación de `storageState` generado
+
+**Windows (PowerShell)**
+
+```powershell
+Test-Path .auth\storageState.json
+Get-Content .auth\storageState.json | Select-Object -First 5
+```
+
+**bash**
+
+```bash
+test -f .auth/storageState.json && head -n 5 .auth/storageState.json
+```
+
+---
+
+### 🧪 UI / Debug puntual
+
+```bash
+npx playwright test --ui
+npx playwright test --project=chromium --headed
+PWDEBUG=1 npx playwright test   # (PowerShell: set PWDEBUG=1; npx playwright test)
+```
+
+---
+
+### 📑 Reportes
+
+```bash
+# HTML
+npx playwright show-report reports/html
+
+# Allure (si tienes allure-cli)
+allure serve reports/allure-results
+# o
+npx allure serve reports/allure-results
+```
+
+---
+
+### 🔠 Calidad (opcional pero recomendado)
+
+```bash
+# Type-check (sin emitir)
+npx tsc -p tsconfig.json --noEmit
+
+# Lint (si tienes ESLint configurado)
+npx eslint . --ext .ts
+```
+
+---
+
+### 🧷 Comprobación específica SauceDemo (si algo duda)
+
+```bash
+# Ir directo a la ruta protegida (desde un test temporal)
+npx playwright test tests/smoke/auth-state.spec.ts --project=chromium -g "inventory"
+```
+
+> Con esta batería: instalas, regeneras sesión, pasas smoke, ejecutas matriz, inspeccionas reportes, y si algo falla, activas DEBUG de Testcontainers.
+>
+
+---
 ## 👤 Créditos
 
 Ismael Sanromán – SDET / QE (Sngular)
