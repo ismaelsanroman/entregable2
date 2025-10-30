@@ -1,36 +1,54 @@
 # 🚀 Entregable 2 — Arquitectura, eficiencia e integración (Playwright + TypeScript)
 
-> Este README explica **cómo usar el proyecto de extremo a extremo**: instalación, configuración por entornos, ejecución local, Docker / Docker Compose, reportería (Allure), ejecución por navegadores y paralelización. **No se incluyen fragmentos de código del repositorio** (Dockerfile, globalSetup, etc.); aquí verás **comandos y procedimientos** listos para ejecutar.
+> Este README explica **cómo usar el proyecto de extremo a extremo**: instalación, 
+> configuración por entornos, ejecución local, Docker / Docker Compose, 
+> reportes (Allure), ejecución por navegadores y paralelización. 
+> aquí verás **comandos y procedimientos** listos para ejecutar.
 
 ---
 ## 🗂️ Estructura del repositorio
 
 ```
 .
-├─ .auth/                           # Estado de sesión persistido (storageState.json)
-├─ .github/workflows/ci.yml         # Pipeline CI con matriz de navegadores
+├─ .auth/ # 🔐 storageState.json generado en globalSetup (NO versionar)
+├─ .github/
+│ └─ workflows/
+│ └─ ci.yml         # 🤖 CI con matriz (chromium/firefox/webkit) y artefactos de reportes
+├─ allure-report/   # 📊 Reporte servido por allure serve (artefacto local)
+├─ allure-results/  # 🧪 Resultados Allure (si ejecutas allure fuera del runner)
 ├─ config/
-│  ├─ env.ts                        # Carga .env/.env.staging/.env.prod → ENV
-│  └─ schemas/
-│     └─ auth.ts                    # Esquema Zod de respuesta /auth/login
+│ ├─ env.ts         # 🌍 Carga de variables (.env/.env.staging/.env.prod) → ENV.BASE_URL, ENV.HEADLESS, etc.
+│ └─ schemas/
+│ └─ auth.ts        # ✅ Esquema/validador Zod (AuthResponseSchema + parseAuthResponse)
 ├─ reports/
-│  ├─ allure-results/               # Resultados raw Allure
-│  └─ html/                         # Reporte HTML de Playwright (artefacto local)
+│ ├─ allure-results/ # 🧾 Resultados Allure del runner Playwright (para allure serve)
+│ └─ html/          # 📑 Reporte HTML de Playwright (abrir con npx playwright show-report)
 ├─ src/
-│  ├─ pages/                        # (POM) páginas – base para siguiente entregable
-│  └─ support/
-│     ├─ globalSetup.ts             # Login real o mock (WireMock + Zod) → storageState.json
-│     └─ logger.ts                  # Logger con emojis y niveles
+│ ├─ pages/         # 🧩 Page Objects (POM)
+│ └─ support/
+│ └─ globalSetup.ts # 🧰 Testcontainers + WireMock + Zod; login UI (SauceDemo) o cookie/localStorage → .auth/storageState.json
 ├─ tests/
-│  └─ inventory.spec.ts             # Test de inventario reutilizando sesión
-├─ test-results/                    # Trazas/videos/screenshots por ejecución
-├─ .env                             # Variables de entorno por defecto (local)
-├─ Dockerfile                       # Imagen de ejecución Playwright + Node
-├─ package.json                     # Scripts de NPM
-├─ playwright.config.ts             # Config central de Playwright
-├─ tsconfig.json                    # TS compiler options
-└─ README.md                        # (este documento)
+│ ├─ smoke/
+│ │ └─ auth-state.spec.ts # 🔎 Smoke robusto: SauceDemo → /inventory.html; AUT real → valida cookie auth_token
+│ └─ inventory.spec.ts # 🛒 E2E de inventario reutilizando sesión global
+├─ test-results/    # 🎥 Traces / videos / screenshots por ejecución
+├─ .dockerignore    # 🧹 Ignora artefactos al construir la imagen
+├─ .env             # 🔧 Variables locales por defecto
+├─ .gitattributes
+├─ .gitignore       # 🚫 Ignora .auth/, reports/, test-results/, allure-*, etc.
+├─ compose.yaml     # 🐳 (Opcional) Servicios auxiliares si decides usar Docker Compose
+├─ Dockerfile       # 📦 Imagen reproducible (Playwright + navegadores + Node)
+├─ package.json     # 🧵 Scripts NPM (tests, mock:up/down si aplican)
+├─ package-lock.json
+├─ playwright.config.ts # 🏗️ Config central: reporters, projects, use.storageState, globalSetup
+├─ tsconfig.json    # ⚙️ Opciones del compilador TypeScript
+└─ README.md        # 📘 Esta guía (instalación, extras, Docker/CI, troubleshooting)
 
+
+> **Nota**  
+> - Carpetas **no versionables**: `.auth/`, `test-results/`, `reports/`, `allure-results/`, `allure-report/`.  
+> - El `globalSetup.ts` arranca **WireMock** con **Testcontainers**, valida `/auth/login` con **Zod** y genera `storageState`.  
+> - Si `BASE_URL` es SauceDemo, hace **login UI real** y guarda el estado; si apuntas a tu AUT real, puedes usar **cookie** o **localStorage**.
 ```
 
 **Qué hace cada pieza**
@@ -46,7 +64,7 @@
 - **`ci.yml`**: job con **strategy.matrix** para `chromium`, `firefox` y `webkit`, cache de npm, publicación de **Allure results** como artefacto.
 
 ---
-## 🧭 Resumen rápido (para impacientes)
+## 🧭 Resumen rápido
 
 - **Instalar** deps + navegadores → `npm ci` → `npx playwright install --with-deps`
 - **Configurar** variables (URL, usuario/clave, flags) → `.env` o variables de entorno
@@ -71,13 +89,13 @@
 
 ## ⚙️ Configuración por entornos
 
-### Variables mínimas recomendadas
-| Variable   | Ejemplo                       | Descripción                                     |
-|-----------|--------------------------------|-------------------------------------------------|
-| `BASE_URL`| `https://app.example.com`      | URL base de la aplicación bajo prueba           |
-| `USER`    | `demo@example.com`             | Usuario de pruebas (si aplica)                  |
-| `PASS`    | `supersecret`                  | Contraseña de pruebas (si aplica)               |
-| `HEADLESS`| `true`                         | Ejecutar navegador en modo headless             |
+### Variables mínimas
+| Variable       | Ejemplo                       | Descripción                                          |
+|----------------|--------------------------------|------------------------------------------------------|
+| `BASE_URL`     | `https://www.saucedemo.com`    | URL base de la aplicación bajo prueba                |
+| `HEADLESS`     | `true`                         | Ejecutar navegador en modo headless                  |
+| `SAUCE_USER`   | `standard_user`               | (Solo SauceDemo) usuario para login UI               |
+| `SAUCE_PASS`   | `secret_sauce`                | (Solo SauceDemo) password para login UI              |
 
 **Gestión habitual**: archivo `.env` local (no versionado) o variables exportadas; en CI usar **secrets**.
 
@@ -111,6 +129,9 @@ npx playwright install --with-deps
 ### Comando base
 ```bash
 npx playwright test
+npx playwright test --project=chromium
+npx playwright test --project=firefox
+npx playwright test --project=webkit
 ```
 
 ### UI/Debug
@@ -118,9 +139,9 @@ npx playwright test
 npx playwright test --ui
 npx playwright test --headed
 
-# Pausas interactivas (Linux/macOS)
+# Linux/macOS
 PWDEBUG=1 npx playwright test
-# (Windows PowerShell)
+# Windows PowerShell
 set PWDEBUG=1; npx playwright test
 ```
 
@@ -135,38 +156,23 @@ npx playwright test --project=webkit
 ```bash
 # Por título/patrón
 npx playwright test -g "@smoke"
-
-# Por ruta
-npx playwright test tests/checkout/
-```
-
-### Paralelización
-```bash
 npx playwright test --workers=4
 ```
 
----
-
-## 📊 Reportería (Allure y artefactos)
-
-- Artefactos estándar:
-
-    - **Allure results** → `reports/allure-results`
-    - **HTML report**   → `reports/html` (si está configurado así en tu repo)
-    - **Traces / Videos / Screenshots** → dentro de `test-results` o rutas configuradas
-
-- Ver Allure localmente:
+### Reporte HTML
 ```bash
-# Servir el reporte a partir de los resultados
+npx playwright show-report reports/html
+```
+
+### Allure (viewer local)
+```bash
+# Servir el reporte a partir de resultados
 npx allure serve reports/allure-results
 
 # (Alternativa) Generar estático y abrir
 npx allure generate reports/allure-results --clean
 npx allure open
 ```
-
-> En CI, publica `reports/allure-results` como artefacto o genera el sitio de Allure si tu pipeline lo soporta.
-
 ---
 
 ## 🐳 Docker (build/run directo)
@@ -176,9 +182,58 @@ npx allure open
 docker build -t entregable2-e2e .
 ```
 
+### Run (Windows PowerShell + Docker Desktop)
+```bash
+docker run --rm -t `
+  -u root `
+  --privileged `
+  -e BASE_URL="https://www.saucedemo.com" `
+  -e SAUCE_USER="standard_user" `
+  -e SAUCE_PASS="secret_sauce" `
+  -e DOCKER_HOST="unix:///var/run/docker.sock" `
+  -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="/var/run/docker.sock" `
+  -e TESTCONTAINERS_HOST_OVERRIDE="host.docker.internal" `
+  -v "/var/run/docker.sock:/var/run/docker.sock" `
+  -v "${PWD}:/work" -w /work `
+  entregable2 npx playwright test --project=chromium
+```
+
+### Run (Linux)
+```bash
+docker run --rm -t \
+  -u root \
+  --privileged \
+  --add-host=host.docker.internal:host-gateway \
+  -e BASE_URL="https://www.saucedemo.com" \
+  -e SAUCE_USER="standard_user" \
+  -e SAUCE_PASS="secret_sauce" \
+  -e DOCKER_HOST=unix:///var/run/docker.sock \
+  -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
+  -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD":/work -w /work \
+  entregable2 npx playwright test --project=chromium
+```
+Claves para que Testcontainers funcione **dentro** de Docker:
+
+- Montar el **socket**: `v /var/run/docker.sock:/var/run/docker.sock`
+- Definir `TESTCONTAINERS_*` y `DOCKER_HOST`
+- `-privileged` (o afinar permisos del grupo del socket)
+- En Linux, `-add-host=host.docker.internal:host-gateway
+
 ## 🧩 Docker Compose — flujo recomendado (4 pasos)
 
-> Requiere que tu `compose.yaml` defina los servicios `real` y `mock` (o equivalentes). Reemplaza los nombres si tu archivo usa otros.
+Si tu `compose.yaml` define servicios (p.ej. `tests`), podrías hacer:
+
+```bash
+Mostrar siempre los detalles
+docker compose build --no-cache
+docker compose run --rm tests
+docker compose down -v --remove-orphans
+
+```
+
+> Ajusta los nombres de servicios a tu compose.yaml. La guía oficial de este repo usa el modo directo (sección anterior), que ya está verificado.
 
 ### 🧹 Paso 1 — Limpiar el estado anterior
 ```bash
@@ -238,9 +293,43 @@ docker compose run --rm mock
 - **Paralelización**: ajustar `--workers` según capacidad, vigilando estabilidad.
 - **Docker/Docker Compose**: comparar resultados con local y confirmar que `reports/`, `.auth/` y `test-results/` se rellenan correctamente.
 - **Allure**: comprobar que los adjuntos (screenshots, videos, traces) están disponibles en fallos y en casos críticos.
-
 ---
+## 🤖 CI (GitHub Actions) — matriz 3 navegadores
 
+Ejemplo de `ci.yml` minimalista:
+
+```yaml
+Mostrar siempre los detalles
+name: CI
+on: [push, pull_request]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: { project: [chromium, firefox, webkit] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - run: npx playwright install --with-deps
+      - name: Run tests
+        env:
+          BASE_URL: https://www.saucedemo.com
+          SAUCE_USER: standard_user
+          SAUCE_PASS: secret_sauce
+        run: npx playwright test --project=${{ matrix.project }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: html-report-${{ matrix.project }}, path: reports/html }
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: allure-results-${{ matrix.project }}, path: reports/allure-results }
+
+```
+---
 ## 🧯 Troubleshooting rápido
 
 - **No se genera `.auth/`** → revisa credenciales/URL/esperas; verifica permisos de la carpeta en host y mapeo de volúmenes.
@@ -250,16 +339,19 @@ docker compose run --rm mock
 - **Flakiness** → considera `--workers` más bajo temporalmente y revisa selectores/esperas/fixtures.
 
 ---
+## 🧩 **Extras** (cumplidos)
+**Mock de autenticación** con **Testcontainers + WireMock** y **validación de contrato** con **Zod**:
 
-## 🗺️ Próximos pasos (opcional)
+- `src/support/globalSetup.ts` levanta **WireMock** efímero (Testcontainers), siembra `POST /auth/login`, **valida** la respuesta con `Zod` (`config/schemas/auth.ts`) y genera `.auth/storageState.json`.
+- Si `BASE_URL` contiene `saucedemo.com`, el `globalSetup` hace **login UI real** (standard_user/secret_sauce por defecto) y guarda el estado.  
+  Si no, inyecta **cookie/token** o (alternativa comentada) **localStorage** para tu AUT.
+- `playwright.config.ts` usa ese estado global (`storageState`) en todos los proyectos.
+- **CI** ejecuta la **matriz** de navegadores (`chromium`, `firefox`, `webkit`).
 
-- Migración progresiva a **Screenplay** (actors/abilities/tasks).
-- Servicios efímeros adicionales (DB/API) con **Testcontainers**.
-- Publicación automática de Allure como artefacto o site en CI.
-- Métricas de **tiempo por test** y **flakiness** para priorizar mejoras.
+> Ventajas: **login único**, **paralelización segura**, **ambiente reproducible** y **contratos validados** en tiempo de ejecución.
 
 ---
 
 ## 👤 Créditos
 
-Equipo QA/SDET — Ismael Sanromán – SDET / QE (Sngular)
+Ismael Sanromán – SDET / QE (Sngular)
