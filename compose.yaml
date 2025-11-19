@@ -1,0 +1,75 @@
+# -----------------------------------------------------------------------------
+# 📦 Docker Compose — Playwright E2E (real / mock con Testcontainers)
+#
+# Objetivo:
+# - Estandarizar la ejecución E2E en contenedor para que sea idéntica en local y CI.
+# - Exponer dos modos:
+#   · real:   contra la web real (AUTH_MODE=real)
+#   · mock:   arranca WireMock con Testcontainers desde *dentro* del contenedor
+#             para aislar backend y validar contratos (AUTH_MODE=mock).
+#
+# Claves:
+# - Ancla `x-common` define la plantilla Playwright: imagen, build args, .env, user y volúmenes
+#   que se reutilizan en los servicios.
+# - `user: "0:0"` ejecuta como root en el contenedor → evita errores EACCES en volúmenes NTFS (Windows).
+# - Volúmenes montados al HOME de pwuser:
+#     /home/pwuser/app/reports   → Allure/HTML (artefactos legibles en host)
+#     /home/pwuser/app/.auth     → storageState (sesión compartida)
+#   (Opcional) podrías añadir /home/pwuser/app/test-results si quieres traces/videos fuera del contenedor.
+#
+# Modo mock:
+# - Monta /var/run/docker.sock y configura:
+#     DOCKER_HOST, TESTCONTAINERS_HOST_OVERRIDE, extra_hosts: host.docker.internal
+#   para que Testcontainers pueda iniciar WireMock desde el contenedor y resolver el host.
+#
+# Flujo recomendado:
+# 1) Limpiar:     docker compose down -v --remove-orphans
+# 2) Build limpio: docker compose build --no-cache
+# 3) Ejecutar real: docker compose run --rm real
+# 4) Ejecutar mock: docker compose run --rm mock
+# -----------------------------------------------------------------------------
+
+name: entregable2
+
+# 🔁 Plantilla reutilizable para los servicios Playwright
+x-common: &playwright
+  image: e2-playwright                 # Nombre de la imagen que construiremos
+  build:
+    context: .                         # Construye con el Dockerfile del repo
+    dockerfile: Dockerfile
+    args:
+      PLAYWRIGHT_VERSION: "1.56.1"     # Alinea versión de runtime con @playwright/test
+  env_file:
+    - .env                             # Variables comunes (BASE_URL, USER, PASS, etc.)
+  user: "0:0"                          # Evita EACCES al escribir en volúmenes (útil en Windows/NTFS)
+  volumes:
+    # Artefactos y estado de sesión se persisten en el host para inspección post-ejecución
+    - ./reports:/home/pwuser/app/reports
+    - ./.auth:/home/pwuser/app/.auth
+    # 💡Opcional (descomenta si quieres traces/videos fuera del contenedor)
+    # - ./test-results:/home/pwuser/app/test-results
+
+services:
+  # 🌐 Modo REAL: ejecuta la suite contra la aplicación real
+  real:
+    <<: *playwright
+    environment:
+      AUTH_MODE: "real"                # El globalSetup hará login UI real y guardará storageState
+
+  # 🧪 Modo MOCK: ejecuta la suite contra un backend simulado (WireMock con Testcontainers)
+  mock:
+    <<: *playwright
+    environment:
+      AUTH_MODE: "mock"                # El globalSetup levanta WireMock y valida contrato
+      DOCKER_HOST: "unix:///var/run/docker.sock"       # Permite a Testcontainers hablar con el Docker del host
+      TESTCONTAINERS_HOST_OVERRIDE: "host.docker.internal"  # El contenedor resuelve al host correctamente
+    extra_hosts:
+      - "host.docker.internal:host-gateway"            # Soporte de resolución en Linux (Docker >= 20.10)
+    volumes:
+      # Monta el socket de Docker para que Testcontainers pueda crear contenedores (WireMock) desde dentro
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Vuelve a declarar reports/.auth aquí (override del ancla) + añade docker.sock
+      - ./reports:/home/pwuser/app/reports
+      - ./.auth:/home/pwuser/app/.auth
+      # 💡Opcional (traces/videos en host)
+      # - ./test-results:/home/pwuser/app/test-results

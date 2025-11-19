@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="GENERAL_MODULE" version="4">
+  <component name="NewModuleRootManager" inherit-compiler-output="true">
+    <exclude-output />
+    <content url="file://$MODULE_DIR$">
+      <excludeFolder url="file://$MODULE_DIR$/reports/allure-results" />
+      <excludeFolder url="file://$MODULE_DIR$/reports/html/data" />
+      <excludeFolder url="file://$MODULE_DIR$/reports/html/trace" />
+      <excludeFolder url="file://$MODULE_DIR$/test-results/inventory-Inventario-–-ses-f22d9--permitir-añadir-al-carrito-chromium" />
+      <excludeFolder url="file://$MODULE_DIR$/test-results/inventory-Inventario-–-ses-f22d9--permitir-añadir-al-carrito-chromium-retry1" />
+      <excludeFolder url="file://$MODULE_DIR$/test-results/inventory-Inventario-–-ses-f22d9--permitir-añadir-al-carrito-firefox" />
+      <excludeFolder url="file://$MODULE_DIR$/test-results/inventory-Inventario-–-ses-f22d9--permitir-añadir-al-carrito-firefox-retry1" />
+      <excludeFolder url="file://$MODULE_DIR$/test-results/inventory-Inventario-–-ses-f22d9--permitir-añadir-al-carrito-webkit" />
+      <excludeFolder url="file://$MODULE_DIR$/test-results/inventory-Inventario-–-ses-f22d9--permitir-añadir-al-carrito-webkit-retry1" />
+    </content>
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
