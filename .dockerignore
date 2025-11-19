@@ -1,0 +1,7 @@
+node_modules
+reports
+.auth
+test-results
+.git
+.gitignore
+.DS_Store

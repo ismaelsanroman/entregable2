@@ -1,0 +1,64 @@
+name: CI – Playwright Matrix
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci
+
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+
+      - name: Generate storageState
+        run: npx playwright test --list && echo "storageState se generará vía globalSetup automáticamente"
+        env:
+          BASE_URL: https://www.saucedemo.com
+          AUTH_MODE: real
+          HEADLESS: "true"
+          AUTH_USER: standard_user
+          AUTH_PASSWORD: secret_sauce
+
+
+      - name: Run tests (${{ matrix.browser }})
+        run: npx playwright test --project=${{ matrix.browser }}
+        env:
+          BASE_URL: https://www.saucedemo.com
+          AUTH_MODE: real
+          HEADLESS: "true"
+
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-report-${{ matrix.browser }}
+          path: reports/html
+
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-${{ matrix.browser }}
+          path: reports/allure-results
